@@ -13,7 +13,7 @@ v1.get("/ping", (req,res) => {
 
 const league = require('./api/league');
 
-v1.get("/account", league.getAccount);
+v1.get("/account", league.parseAccount, league.getAccount);
 
 app.use("/api/v1", v1);
 
