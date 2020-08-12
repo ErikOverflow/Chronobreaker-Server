@@ -6,9 +6,11 @@ const bodyParser = require("body-parser");
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-const league = require('./api/league');
-
-//Middleware for 
+const riotMongoose = require('./dbs/riotDb');
+const riotDb = riotMongoose.connection;
+riotDb.on('error', console.error.bind(console, 'Riot MongoDB connection error'));
+const league = require('./api/league')(riotDb);
+//Middleware for prepping the req.lol object, then pulling region and account from the payload
 app.use(league.zDrive);
 app.use(league.accountParser);
 
