@@ -2,6 +2,7 @@ const riotApi = require("../util/riotUrls");
 const axios = require("axios");
 const config = require("../config");
 const Summoner = require("../models/summoner").Summoner;
+const statusCodes = require("../util/statusCodes");
 
 let riotDb;
 const wsconfig = {
@@ -26,7 +27,7 @@ const accountParser = (req, res, next) => {
       (err, doc) => {
         if (err) {
           return res
-            .status(500)
+            .status(statusCodes.SERVICE_UNAVAILABLE)
             .json({ db: "Unable to connect to League Cache DB" });
         } else {
           if (!doc) {
@@ -41,7 +42,7 @@ const accountParser = (req, res, next) => {
               return next();
             })
             .catch((err) => {
-                return res.status(404).json({summonerName: "Summoner name not found"});
+                return res.status(statusCodes.DATA_NOT_FOUND).json({summonerName: "Summoner name not found"});
             });
           } else {
             req.lol.account = doc;
