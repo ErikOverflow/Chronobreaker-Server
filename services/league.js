@@ -1,8 +1,10 @@
-const riotApi = require("../util/riotUrls");
+const riotUrls = require("../util/riotUrls");
 const axios = require("axios");
 const config = require("../config");
 const Summoner = require("../models/summoner").Summoner;
+const Match = require("../models/match").Match;
 const statusCodes = require("../util/statusCodes");
+const match = require("../models/match");
 
 let riotDb;
 const wsconfig = {
@@ -49,25 +51,25 @@ const accountParser = async (req, res, next) => {
   }
 
   //If we reach this point in the code, we know that the accountData doesn't exist or is stale. We will have to fetch from Riot again
-  const url = riotApi.summoner.byName(req.lol.region, req.query.summonerName);
-  let riotData;
+  const url = riotUrls.summoner.byName(req.lol.region, req.query.summonerName);
+  let riotResponse;
   try {
-    riotData = await axios.get(url, wsconfig);
+    riotResponse = await axios.get(url, wsconfig);
   } catch (err) {
     return res
       .status(statusCodes.DATA_NOT_FOUND)
       .json({ summonerName: "Summoner name not found" });
   }
-  if(!accountData){
+  if (!accountData) {
     //create new summoner if they didn't exist
     accountData = new Summoner({
-      ...riotData.data,
-      region: req.query.region
+      ...riotResponse.data,
+      region: req.query.region,
     });
-  } else{
+  } else {
     accountData.set({
-      ...riotData.data,
-      lastFetched: Date.now()
+      ...riotResponse.data,
+      lastFetched: Date.now(),
     });
   }
   await accountData.save();
@@ -79,11 +81,94 @@ const getAccount = (req, res) => {
   return res.status(200).json(req.lol.account);
 };
 
+const loadNewMatches = async (req, res, next) => {
+  //Account and region should already be on req.lol.account and req.lol.region
+
+  //Get the time of the last stored match for the current player
+
+  //Get match list for player since the last call (beginTime)
+  const url = riotUrls.match.list(
+    req.lol.region,
+    req.lol.account.accountId,
+    (beginTime = 1596941563121)
+  );
+  let riotResponse;
+  try {
+    riotResponse = await axios.get(url, wsconfig);
+  } catch (err) {
+    return res
+      .status(statusCodes.DATA_NOT_FOUND)
+      .json({ riot: "Match list not found" });
+  }
+
+  for (const match of riotResponse.data.matches) {
+    //remove any matches that are already stored in the database
+    let cachedMatch;
+    try {
+      cachedMatch = await Match.findOne({
+        gameId: match.gameId,
+      });
+    } catch (err) {
+      console.error(err.message);
+      return res
+        .status(statusCodes.SERVICE_UNAVAILABLE)
+        .json({ db: "Unable to connect to Match Cache DB" });
+    }
+    if(cachedMatch){
+      //Don't fetch details, the match is already stored
+      continue;
+    }
+    let matchDetailsResponse;
+    const detailUrl = riotUrls.match.details(match.platformId, match.gameId);
+    try {
+      matchDetailsResponse = await axios.get(detailUrl, wsconfig);
+    } catch (err) {
+      return res
+        .status(statusCodes.DATA_NOT_FOUND)
+        .json({ riot: "Match details not found" });
+    }
+    let matchData = matchDetailsResponse.data;
+
+    //Parse out teams separately
+    let teams = [];
+    matchData.teams.forEach((team) => {
+      teams.push({
+        ...team,
+      });
+    });
+    delete matchData.teams;
+
+    //Parse our participants separately
+    let participants = [];
+    matchData.participants.forEach((participant) => {
+      let identity = matchData.participantIdentities.find(
+        (identity) => identity.participantId == participant.participantId
+      );
+      let participantDoc = {
+        ...participant,
+        ...identity.player,
+      };
+      participants.push(participantDoc);
+    });
+    delete matchData.participants;
+
+    //Create the match object
+    matchDoc = new Match({
+      ...matchData,
+      teams,
+      participants,
+    });
+    await matchDoc.save();
+  }
+  return next();
+};
+
 module.exports = (db) => {
   riotDb = db;
   return {
     zDrive,
     accountParser,
     getAccount,
+    loadNewMatches,
   };
 };

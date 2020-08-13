@@ -10,16 +10,17 @@ const riotMongoose = require('./dbs/riotDb');
 const riotDb = riotMongoose.connection;
 riotDb.on('error', console.error.bind(console, 'Riot MongoDB connection error'));
 const league = require('./services/league')(riotDb);
-//Middleware for prepping the req.lol object, then pulling region and account from the payload
+//Middleware for prepping the req.lol object, then pulling region from the payload
 app.use(league.zDrive);
-app.use(league.accountParser);
+
 
 var v1 = express.Router();
 v1.get("/ping", (req,res) => {
     res.status(200).json({ ping: "Server is running."});
 });
 
-v1.get("/account", league.getAccount);
+v1.get("/account", league.accountParser, league.getAccount);
+v1.get("/loadMatches", league.accountParser, league.loadNewMatches, (req,res) => res.status(200).json({payload:"Done"}));
 
 app.use("/api/v1", v1);
 
