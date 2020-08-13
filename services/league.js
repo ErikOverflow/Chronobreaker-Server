@@ -18,42 +18,61 @@ const zDrive = (req, res, next) => {
   return next();
 };
 
-//Middleware to optionally parse the account and fetch it from Riot on any requests. the Quey Parameter "SummonerName" is on the request, it adds Riot's account details.
-const accountParser = (req, res, next) => {
-  const summonerName = req.query.summonerName;
-  if (req.query.summonerName && req.lol.region) {
-    Summoner.findOne(
-      { name: summonerName, region: req.lol.region },
-      (err, doc) => {
-        if (err) {
-          return res
-            .status(statusCodes.SERVICE_UNAVAILABLE)
-            .json({ db: "Unable to connect to League Cache DB" });
-        } else {
-          if (!doc) {
-            const url = riotApi.summoner.byName(req.lol.region, summonerName);
-            return axios.get(url, wsconfig).then((result) => {
-              req.lol.account = {
-                ...result.data,
-                region: req.lol.region,
-              };
-              let accountData = new Summoner(req.lol.account);
-              accountData.save();
-              return next();
-            })
-            .catch((err) => {
-                return res.status(statusCodes.DATA_NOT_FOUND).json({summonerName: "Summoner name not found"});
-            });
-          } else {
-            req.lol.account = doc;
-            return next();
-          }
-        }
-      }
-    );
-  } else {
-    return next();
+//Middleware to optionally parse the account and fetch it from Riot/mongo database on any requests. the Quey Parameter "SummonerName" is on the request, it adds Riot's account details.
+const accountParser = async (req, res, next) => {
+  if (!req.query.summonerName && !req.lol.region) {
+    return res
+      .status(statusCodes.BAD_REQUEST)
+      .json({ request: "Missing summonerName and region" });
   }
+  let accountData;
+  try {
+    accountData = await Summoner.findOne({
+      name: new RegExp(req.query.summonerName, "i"),
+      region: new RegExp(req.lol.region, "i"),
+    });
+  } catch (err) {
+    console.error(err.message);
+    return res
+      .status(statusCodes.SERVICE_UNAVAILABLE)
+      .json({ db: "Unable to connect to League Cache DB" });
+  }
+  //If a document was returned, check its staleness (lastFetched should be within 24 hours)
+  if (accountData) {
+    let yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    //If it's not stale, return it
+    if (accountData.lastFetched > yesterday) {
+      req.lol.account = accountData;
+      return next();
+    }
+  }
+
+  //If we reach this point in the code, we know that the accountData doesn't exist or is stale. We will have to fetch from Riot again
+  const url = riotApi.summoner.byName(req.lol.region, req.query.summonerName);
+  let riotData;
+  try {
+    riotData = await axios.get(url, wsconfig);
+  } catch (err) {
+    return res
+      .status(statusCodes.DATA_NOT_FOUND)
+      .json({ summonerName: "Summoner name not found" });
+  }
+  if(!accountData){
+    //create new summoner if they didn't exist
+    accountData = new Summoner({
+      ...riotData.data,
+      region: req.query.region
+    });
+  } else{
+    accountData.set({
+      ...riotData.data,
+      lastFetched: Date.now()
+    });
+  }
+  await accountData.save();
+  req.lol.account = accountData;
+  return next();
 };
 
 const getAccount = (req, res) => {
