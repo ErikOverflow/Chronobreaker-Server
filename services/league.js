@@ -273,15 +273,28 @@ const getPlayerLog = async (req, res) => {
       .json({ db: "Unable to connect to Timeline Cache DB" });
   }
   const participant = match.participants.find(participant => participant.accountId === accountId);
-  playerStatLog = [];
+  let playerStatLog = [];
+  let events = [];
   timeline.frames.forEach(frame => {
+    participantFrame = frame.participantFrames.filter(pFrame => {
+      return pFrame.participantId === participant.participantId}
+      );
     playerStatLog.push({
       timestamp: frame.timestamp,
-      playerStats: frame.participantFrames[participant.participantId],
-      events: frame.events,
+      playerStats: participantFrame,
     });
+    frame.events.forEach(event => {
+      events.push(event);
+    })
   })
-  return res.status(200).json(playerStatLog);
+  let playerEvents = events.filter(event => {
+    return (event.participantId === participant.participantId || (event.assistingParticipantIds && event.assistingParticipantIds.includes(participant.participantId)))
+  })
+  let otherPlayerEvents = events.filter(event => {
+    return !(event.participantId === participant.participantId || (event.assistingParticipantIds && event.assistingParticipantIds.includes(participant.participantId)))
+  })
+
+  return res.status(200).json({statLog: playerStatLog, playerEvents, otherPlayerEvents});
 }
 
 module.exports = (db) => {
