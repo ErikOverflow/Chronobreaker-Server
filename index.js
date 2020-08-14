@@ -20,7 +20,8 @@ v1.get("/ping", (req,res) => {
 });
 
 v1.get("/account", league.accountParser, league.getAccount);
-v1.get("/loadMatches", league.accountParser, league.loadNewMatches, (req,res) => res.status(200).json({payload:"Done"}));
+v1.get("/loadMatches", league.accountParser, league.fetchNewMatches, (req,res) => res.status(200).json({payload:"Done"}));
+v1.get("/chronobreak", league.loadTimeline, league.accountParser, league.getPlayerLog);
 
 app.use("/api/v1", v1);
 

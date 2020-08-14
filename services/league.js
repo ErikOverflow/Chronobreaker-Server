@@ -3,6 +3,7 @@ const axios = require("axios");
 const config = require("../config");
 const Summoner = require("../models/summoner").Summoner;
 const Match = require("../models/match").Match;
+const Timeline = require("../models/timeline").Timeline;
 const statusCodes = require("../util/statusCodes");
 const match = require("../models/match");
 
@@ -81,87 +82,207 @@ const getAccount = (req, res) => {
   return res.status(200).json(req.lol.account);
 };
 
-const loadNewMatches = async (req, res, next) => {
+const fetchNewMatches = async (req, res, next) => {
   //Account and region should already be on req.lol.account and req.lol.region
 
   //Get the time of the last stored match for the current player
+  let beginTime;
+  try {
+    const lastMatch = await Match.findOne({
+      "participants.accountId": req.lol.account.accountId,
+    }).sort({ gameCreation: -1 });
+    beginTime = lastMatch.gameCreation;
+  } catch (err) {
+    beginTime = 0;
+  }
 
-  //Get match list for player since the last call (beginTime)
+  //Get match list for player since the last stored match (beginTime)
   const url = riotUrls.match.list(
     req.lol.region,
     req.lol.account.accountId,
-    (beginTime = 1596941563121)
+    beginTime+1
   );
   let riotResponse;
   try {
     riotResponse = await axios.get(url, wsconfig);
   } catch (err) {
-    return res
+    if(err.response.status === statusCodes.DATA_NOT_FOUND){
+      return res
       .status(statusCodes.DATA_NOT_FOUND)
-      .json({ riot: "Match list not found" });
+      .json({ matches: "No new matches" });
+    }
+    return res
+      .status(statusCodes.SERVICE_UNAVAILABLE)
+      .json({ riot: "Error fetching data from Riot" });
   }
-
-  for (const match of riotResponse.data.matches) {
-    //remove any matches that are already stored in the database
-    let cachedMatch;
-    try {
-      cachedMatch = await Match.findOne({
-        gameId: match.gameId,
-      });
-    } catch (err) {
-      console.error(err.message);
-      return res
-        .status(statusCodes.SERVICE_UNAVAILABLE)
-        .json({ db: "Unable to connect to Match Cache DB" });
-    }
-    if(cachedMatch){
-      //Don't fetch details, the match is already stored
-      continue;
-    }
-    let matchDetailsResponse;
-    const detailUrl = riotUrls.match.details(match.platformId, match.gameId);
-    try {
-      matchDetailsResponse = await axios.get(detailUrl, wsconfig);
-    } catch (err) {
-      return res
-        .status(statusCodes.DATA_NOT_FOUND)
-        .json({ riot: "Match details not found" });
-    }
-    let matchData = matchDetailsResponse.data;
-
-    //Parse out teams separately
-    let teams = [];
-    matchData.teams.forEach((team) => {
-      teams.push({
-        ...team,
-      });
-    });
-    delete matchData.teams;
-
-    //Parse our participants separately
-    let participants = [];
-    matchData.participants.forEach((participant) => {
-      let identity = matchData.participantIdentities.find(
-        (identity) => identity.participantId == participant.participantId
-      );
-      let participantDoc = {
-        ...participant,
-        ...identity.player,
-      };
-      participants.push(participantDoc);
-    });
-    delete matchData.participants;
-
-    //Create the match object
-    matchDoc = new Match({
-      ...matchData,
-      teams,
-      participants,
-    });
-    await matchDoc.save();
-  }
+  //Iterate through the matches and store the details
+  let promises = riotResponse.data.matches.map((match) => {
+    return fetchMatchDetails(match);
+  });
+  await Promise.all(promises);
   return next();
 };
+
+const fetchMatchDetails = async (match) => {
+  let cachedMatch;
+  try {
+    cachedMatch = await Match.findOne({
+      gameId: match.gameId,
+    });
+  } catch (err) {
+    console.error(err.message);
+    return res
+      .status(statusCodes.SERVICE_UNAVAILABLE)
+      .json({ db: "Unable to connect to Match Cache DB" });
+  }
+  if (cachedMatch) {
+    //Don't fetch details, the match is already stored.
+    return Promise.resolve("OK");
+  }
+  let matchDetailsResponse;
+  const detailUrl = riotUrls.match.details(match.platformId, match.gameId);
+  try {
+    matchDetailsResponse = await axios.get(detailUrl, wsconfig);
+  } catch (err) {
+    return res
+      .status(statusCodes.DATA_NOT_FOUND)
+      .json({ riot: "Match details not found" });
+  }
+  let matchData = matchDetailsResponse.data;
+
+  //Parse out teams separately
+  let teams = [];
+  matchData.teams.forEach((team) => {
+    teams.push({
+      ...team,
+    });
+  });
+  delete matchData.teams;
+
+  //Parse our participants separately
+  let participants = [];
+  matchData.participants.forEach((participant) => {
+    let identity = matchData.participantIdentities.find(
+      (identity) => identity.participantId == participant.participantId
+    );
+    let participantDoc = {
+      ...participant,
+      ...identity.player,
+    };
+    participants.push(participantDoc);
+  });
+  delete matchData.participants;
+
+  //Create the match object
+  let matchDoc = new Match({
+    ...matchData,
+    teams,
+    participants,
+  });
+  await matchDoc.save();
+  return Promise.resolve("OK");
+};
+
+const loadTimeline = async (req,res,next) => {
+  const region = req.lol.region;
+  if (!req.query.gameId) {
+    return res
+      .status(statusCodes.BAD_REQUEST)
+      .json({ request: "Missing game ID" });
+  }
+  const gameId = req.query.gameId;
+  await fetchMatchTimeline(region, gameId);
+  return next();
+}
+
+const fetchMatchTimeline = async (region, gameId) => {
+  let cachedTimeline;
+  try {
+    cachedTimeline = await Timeline.findOne({
+      gameId,
+    });
+  } catch (err) {
+    console.error(err.message);
+    return res
+      .status(statusCodes.SERVICE_UNAVAILABLE)
+      .json({ db: "Unable to connect to Timeline Cache DB" });
+  }
+  if (cachedTimeline) {
+    //Don't fetch details, the Timeline is already stored.
+    return Promise.resolve("OK");
+  }
+
+  let timelineResponse;
+  const timelineUrl = riotUrls.match.timeline(region, gameId);
+  try {
+    timelineResponse = await axios.get(timelineUrl, wsconfig);
+  } catch (err) {
+    return res
+      .status(statusCodes.DATA_NOT_FOUND)
+      .json({ riot: "Match details not found" });
+  }
+  let timelineData = timelineResponse.data;
+  let frames = [];
+  timelineData.frames.forEach(riotFrame => {
+    let frame = {
+      participantFrames: Object.values(riotFrame.participantFrames),
+      events: riotFrame.events,
+      timestamp: riotFrame.timestamp,
+    }
+    frames.push(frame);
+  });
+
+  let timelineDoc = new Timeline({
+    gameId,
+    frameInterval: timelineData.frameInterval,
+    frames,
+  })
+  await timelineDoc.save();
+  return Promise.resolve(timelineDoc);
+}
+
+const getPlayerLog = async (req, res) => {
+  if (!req.query.gameId) {
+    return res
+      .status(statusCodes.BAD_REQUEST)
+      .json({ request: "Missing game ID" });
+  }
+  const accountId = req.lol.account.accountId;
+  const region = req.lol.region;
+  const gameId = req.query.gameId;
+  let match;
+  try {
+    match = await Match.findOne({
+      gameId,
+    });
+  } catch (err) {
+    console.error(err.message);
+    return res
+      .status(statusCodes.SERVICE_UNAVAILABLE)
+      .json({ db: "Unable to connect to Match Cache DB" });
+  }
+  let timeline;
+  try {
+    timeline = await Timeline.findOne({
+      gameId,
+    });
+  } catch (err) {
+    console.error(err.message);
+    return res
+      .status(statusCodes.SERVICE_UNAVAILABLE)
+      .json({ db: "Unable to connect to Timeline Cache DB" });
+  }
+  const participant = match.participants.find(participant => participant.accountId === accountId);
+  playerStatLog = [];
+  timeline.frames.forEach(frame => {
+    playerStatLog.push({
+      timestamp: frame.timestamp,
+      playerStats: frame.participantFrames[participant.participantId],
+      events: frame.events,
+    });
+  })
+  return res.status(200).json(playerStatLog);
+}
 
 module.exports = (db) => {
   riotDb = db;
@@ -169,6 +290,8 @@ module.exports = (db) => {
     zDrive,
     accountParser,
     getAccount,
-    loadNewMatches,
+    fetchNewMatches,
+    loadTimeline,
+    getPlayerLog,
   };
 };
