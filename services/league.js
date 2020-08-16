@@ -4,8 +4,18 @@ const config = require("../config");
 const Summoner = require("../models/summoner").Summoner;
 const Match = require("../models/match").Match;
 const Timeline = require("../models/timeline").Timeline;
+const champion = require('./champion');
 const statusCodes = require("../util/statusCodes");
-const match = require("../models/match");
+const ignoredEvents = ["WARD_PLACED",
+"WARD_KILL",
+"ITEM_PURCHASED",
+"ITEM_SOLD",
+"ITEM_DESTROYED",
+"ITEM_UNDO",
+"SKILL_LEVEL_UP",
+"ASCENDED_EVENT",
+"CAPTURE_POINT",
+"PORO_KING_SUMMON"]
 
 let riotDb;
 const wsconfig = {
@@ -43,7 +53,7 @@ const accountParser = async (req, res, next) => {
   //If a document was returned, check its staleness (lastFetched should be within 24 hours)
   if (accountData) {
     let yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setDate(yesterday.getDate() - 7);
     //If it's not stale, return it
     if (accountData.lastFetched > yesterday) {
       req.lol.account = accountData;
@@ -217,9 +227,7 @@ const fetchMatchTimeline = async (region, gameId) => {
   try {
     timelineResponse = await axios.get(timelineUrl, wsconfig);
   } catch (err) {
-    return res
-      .status(statusCodes.DATA_NOT_FOUND)
-      .json({ riot: "Match details not found" });
+    return Promise.reject("Failed to fetch data from Riot");
   }
   let timelineData = timelineResponse.data;
   let frames = [];
@@ -284,17 +292,44 @@ const getPlayerLog = async (req, res) => {
       playerStats: participantFrame,
     });
     frame.events.forEach(event => {
-      events.push(event);
+      if(!ignoredEvents.includes(event.type)){
+        events.push(event);
+      }
     })
   })
-  let playerEvents = events.filter(event => {
-    return (event.participantId === participant.participantId || (event.assistingParticipantIds && event.assistingParticipantIds.includes(participant.participantId)))
-  })
-  let otherPlayerEvents = events.filter(event => {
-    return !(event.participantId === participant.participantId || (event.assistingParticipantIds && event.assistingParticipantIds.includes(participant.participantId)))
-  })
 
-  return res.status(200).json({statLog: playerStatLog, playerEvents, otherPlayerEvents});
+  return res.status(200).json({statLog: playerStatLog, events});
+}
+
+const getMatchData = async(req,res) => {
+  if (!req.query.gameId) {
+    return res
+      .status(statusCodes.BAD_REQUEST)
+      .json({ request: "Missing game ID" });
+  }
+  const accountId = req.lol.account.accountId;
+  const region = req.lol.region;
+  const gameId = req.query.gameId;
+  let match;
+  try {
+    match = await Match.findOne({
+      gameId,
+    });
+  } catch (err) {
+    console.error(err.message);
+    return res
+      .status(statusCodes.SERVICE_UNAVAILABLE)
+      .json({ db: "Unable to connect to Match Cache DB" });
+  }
+  return res.status(200).json(match);
+}
+
+const getChampionByKey = async (req,res) => {
+  if(!req.query.championKey){
+      return res.status(statusCodes.BAD_REQUEST).json({request: "Champion ID must be specified in the request."});
+  }
+  const championData = await champion.getChampionByKey(req.query.championKey);
+  return res.status(statusCodes.OK).json(championData);
 }
 
 module.exports = (db) => {
@@ -306,5 +341,7 @@ module.exports = (db) => {
     fetchNewMatches,
     loadTimeline,
     getPlayerLog,
+    getMatchData,
+    getChampionByKey
   };
 };
