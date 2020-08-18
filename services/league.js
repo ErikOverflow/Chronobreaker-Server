@@ -301,7 +301,7 @@ const getPlayerLog = async (req, res) => {
   return res.status(200).json({statLog: playerStatLog, events});
 }
 
-const getMatchData = async(req,res) => {
+const getMatchData = async (req,res) => {
   if (!req.query.gameId) {
     return res
       .status(statusCodes.BAD_REQUEST)
@@ -312,15 +312,25 @@ const getMatchData = async(req,res) => {
   const gameId = req.query.gameId;
   let match;
   try {
-    match = await Match.findOne({
+    match = (await Match.findOne({
       gameId,
-    });
+    })).toObject();
   } catch (err) {
     console.error(err.message);
     return res
       .status(statusCodes.SERVICE_UNAVAILABLE)
       .json({ db: "Unable to connect to Match Cache DB" });
   }
+
+  for (let participant of match.participants){
+    let champ = await champion.getChampionByKey(participant.championId);
+    participant.championName = champ.name;
+  }
+
+  // for (index in match.participants){
+  //   let participant = match.participants[index];
+  //   match.participants[index].championName = await champion.getChampionByKey(participant.championId);
+  // }
   return res.status(200).json(match);
 }
 
