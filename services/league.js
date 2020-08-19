@@ -4,18 +4,21 @@ const config = require("../config");
 const Summoner = require("../models/summoner").Summoner;
 const Match = require("../models/match").Match;
 const Timeline = require("../models/timeline").Timeline;
-const champion = require('./champion');
+const cdn = require("./cdn");
+const champion = require("./champion");
 const statusCodes = require("../util/statusCodes");
-const ignoredEvents = ["WARD_PLACED",
-"WARD_KILL",
-"ITEM_PURCHASED",
-"ITEM_SOLD",
-"ITEM_DESTROYED",
-"ITEM_UNDO",
-"SKILL_LEVEL_UP",
-"ASCENDED_EVENT",
-"CAPTURE_POINT",
-"PORO_KING_SUMMON"]
+const ignoredEvents = [
+  "WARD_PLACED",
+  "WARD_KILL",
+  "ITEM_PURCHASED",
+  "ITEM_SOLD",
+  "ITEM_DESTROYED",
+  "ITEM_UNDO",
+  "SKILL_LEVEL_UP",
+  "ASCENDED_EVENT",
+  "CAPTURE_POINT",
+  "PORO_KING_SUMMON",
+];
 
 let riotDb;
 const wsconfig = {
@@ -110,16 +113,16 @@ const fetchNewMatches = async (req, res, next) => {
   const url = riotUrls.match.list(
     req.lol.region,
     req.lol.account.accountId,
-    beginTime+1
+    beginTime + 1
   );
   let riotResponse;
   try {
     riotResponse = await axios.get(url, wsconfig);
   } catch (err) {
-    if(err.response.status === statusCodes.DATA_NOT_FOUND){
+    if (err.response.status === statusCodes.DATA_NOT_FOUND) {
       return res
-      .status(statusCodes.DATA_NOT_FOUND)
-      .json({ matches: "No new matches" });
+        .status(statusCodes.DATA_NOT_FOUND)
+        .json({ matches: "No new matches" });
     }
     return res
       .status(statusCodes.SERVICE_UNAVAILABLE)
@@ -193,7 +196,7 @@ const fetchMatchDetails = async (match) => {
   return Promise.resolve("OK");
 };
 
-const loadTimeline = async (req,res,next) => {
+const loadTimeline = async (req, res, next) => {
   const region = req.lol.region;
   if (!req.query.gameId) {
     return res
@@ -203,7 +206,7 @@ const loadTimeline = async (req,res,next) => {
   const gameId = req.query.gameId;
   await fetchMatchTimeline(region, gameId);
   return next();
-}
+};
 
 const fetchMatchTimeline = async (region, gameId) => {
   let cachedTimeline;
@@ -231,12 +234,12 @@ const fetchMatchTimeline = async (region, gameId) => {
   }
   let timelineData = timelineResponse.data;
   let frames = [];
-  timelineData.frames.forEach(riotFrame => {
+  timelineData.frames.forEach((riotFrame) => {
     let frame = {
       participantFrames: Object.values(riotFrame.participantFrames),
       events: riotFrame.events,
       timestamp: riotFrame.timestamp,
-    }
+    };
     frames.push(frame);
   });
 
@@ -244,10 +247,10 @@ const fetchMatchTimeline = async (region, gameId) => {
     gameId,
     frameInterval: timelineData.frameInterval,
     frames,
-  })
+  });
   await timelineDoc.save();
   return Promise.resolve(timelineDoc);
-}
+};
 
 const getPlayerLog = async (req, res) => {
   if (!req.query.gameId) {
@@ -280,41 +283,45 @@ const getPlayerLog = async (req, res) => {
       .status(statusCodes.SERVICE_UNAVAILABLE)
       .json({ db: "Unable to connect to Timeline Cache DB" });
   }
-  const participant = match.participants.find(participant => participant.accountId === accountId);
+
+  //Build out player stat log
+  const participant = match.participants.find(
+    (p) => p.accountId === accountId
+  );
   let playerStatLog = [];
   let events = [];
-  timeline.frames.forEach(frame => {
-    participantFrame = frame.participantFrames.filter(pFrame => {
-      return pFrame.participantId === participant.participantId}
-      );
+  timeline.frames.forEach((frame) => {
+    participantFrame = frame.participantFrames.filter((pFrame) => {
+      return pFrame.participantId === participant.participantId;
+    });
     playerStatLog.push({
       timestamp: frame.timestamp,
       playerStats: participantFrame,
     });
-    frame.events.forEach(event => {
-      if(!ignoredEvents.includes(event.type)){
+    frame.events.forEach((event) => {
+      if (!ignoredEvents.includes(event.type)) {
         events.push(event);
       }
-    })
-  })
+    });
+  });
 
-  return res.status(200).json({statLog: playerStatLog, events});
-}
+  return res.status(200).json({ statLog: playerStatLog, events });
+};
 
-const getMatchData = async (req,res) => {
+const getMatchData = async (req, res) => {
   if (!req.query.gameId) {
     return res
       .status(statusCodes.BAD_REQUEST)
       .json({ request: "Missing game ID" });
   }
-  const accountId = req.lol.account.accountId;
-  const region = req.lol.region;
   const gameId = req.query.gameId;
   let match;
   try {
-    match = (await Match.findOne({
-      gameId,
-    })).toObject();
+    match = (
+      await Match.findOne({
+        gameId,
+      })
+    ).toObject();
   } catch (err) {
     console.error(err.message);
     return res
@@ -322,25 +329,24 @@ const getMatchData = async (req,res) => {
       .json({ db: "Unable to connect to Match Cache DB" });
   }
 
-  for (let participant of match.participants){
+  for (let participant of match.participants) {
     let champ = await champion.getChampionByKey(participant.championId);
     participant.championName = champ.name;
+    participant.champonImageUri =
+      cdn.championImagePath + "/" + champ.image.full;
   }
-
-  // for (index in match.participants){
-  //   let participant = match.participants[index];
-  //   match.participants[index].championName = await champion.getChampionByKey(participant.championId);
-  // }
   return res.status(200).json(match);
-}
+};
 
-const getChampionByKey = async (req,res) => {
-  if(!req.query.championKey){
-      return res.status(statusCodes.BAD_REQUEST).json({request: "Champion ID must be specified in the request."});
+const getChampionByKey = async (req, res) => {
+  if (!req.query.championKey) {
+    return res
+      .status(statusCodes.BAD_REQUEST)
+      .json({ request: "Champion ID must be specified in the request." });
   }
   const championData = await champion.getChampionByKey(req.query.championKey);
   return res.status(statusCodes.OK).json(championData);
-}
+};
 
 module.exports = (db) => {
   riotDb = db;
@@ -352,6 +358,6 @@ module.exports = (db) => {
     loadTimeline,
     getPlayerLog,
     getMatchData,
-    getChampionByKey
+    getChampionByKey,
   };
 };
