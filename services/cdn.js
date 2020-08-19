@@ -5,7 +5,8 @@ const fs = require('fs');
 const versionList = 'http://ddragon.leagueoflegends.com/api/versions.json';
 //Location of the versioned tarball
 const tarSet = (version) => `https://ddragon.leagueoflegends.com/cdn/dragontail-${version}.tgz`
-const baseUri = 'C:/CDNData';
+const baseUri = 'http://localhost:8085';
+const fileSystem = 'C:/CDNData';
 const championImagePath = `${baseUri}/img/champion`;
 module.exports = {
     championImagePath
@@ -30,8 +31,12 @@ const updateTar = async () => {
     let tarballResponse, version;
     do{
         version = versions[versionIndex++];
-        if(fs.existsSync(`${baseUri}/${version}`)){
+        try{
+            await axios.get(`${baseUri}/${version}`);
             return baseUri;
+        }
+        catch{
+            
         }
         try{
             tarballResponse = await axios.get(tarSet(version), wsconfig);
@@ -41,8 +46,8 @@ const updateTar = async () => {
         }
     } while (tarballResponse.status != 200)
     //If you want to store your files on an S3 bucket or external CDN, then the response should be streamed to that destination and extracted there.
-    await tarballResponse.data.pipe(tar.x({C: baseUri, strip: 1}, [`${version}/img`]));
-    fs.writeFileSync(baseUri + '/' + version);
+    await tarballResponse.data.pipe(tar.x({C: fileSystem, strip: 1}, [`${version}/img`]));
+    fs.writeFileSync(fileSystem + '/' + version);
     return baseUri;
 }
 

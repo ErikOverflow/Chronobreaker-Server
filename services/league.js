@@ -53,7 +53,7 @@ const accountParser = async (req, res, next) => {
       .status(statusCodes.SERVICE_UNAVAILABLE)
       .json({ db: "Unable to connect to League Cache DB" });
   }
-  //If a document was returned, check its staleness (lastFetched should be within 24 hours)
+  //If a document was returned, check its staleness (lastFetched should be within 7 days)
   if (accountData) {
     let yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 7);
@@ -332,7 +332,7 @@ const getMatchData = async (req, res) => {
   for (let participant of match.participants) {
     let champ = await champion.getChampionByKey(participant.championId);
     participant.championName = champ.name;
-    participant.champonImageUri =
+    participant.championImageUri =
       cdn.championImagePath + "/" + champ.image.full;
   }
   return res.status(200).json(match);
