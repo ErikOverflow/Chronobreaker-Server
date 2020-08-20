@@ -4,7 +4,7 @@ const config = require("../config");
 const Summoner = require("../models/summoner").Summoner;
 const Match = require("../models/match").Match;
 const Timeline = require("../models/timeline").Timeline;
-const cdn = require("./cdn");
+const cdnBase = "http://localhost:8085";
 const champion = require("./champion");
 const statusCodes = require("../util/statusCodes");
 const ignoredEvents = [
@@ -333,7 +333,7 @@ const getMatchData = async (req, res) => {
     let champ = await champion.getChampionByKey(participant.championId);
     participant.championName = champ.name;
     participant.championImageUri =
-      cdn.championImagePath + "/" + champ.image.full;
+      cdnBase + "/img/champion/" + champ.image.full;
   }
   return res.status(200).json(match);
 };
